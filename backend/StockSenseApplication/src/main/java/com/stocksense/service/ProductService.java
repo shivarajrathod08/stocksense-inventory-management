@@ -3,14 +3,21 @@ package com.stocksense.service;
 import com.stocksense.dto.request.ProductRequest;
 import com.stocksense.dto.response.ProductResponse;
 import com.stocksense.entity.Category;
+import com.stocksense.entity.Location;
 import com.stocksense.entity.Product;
+import com.stocksense.entity.User;
+import com.stocksense.exception.BusinessException;
 import com.stocksense.exception.DuplicateResourceException;
 import com.stocksense.exception.ResourceNotFoundException;
 import com.stocksense.repository.CategoryRepository;
 import com.stocksense.repository.InventoryRepository;
+import com.stocksense.repository.LocationRepository;
 import com.stocksense.repository.ProductRepository;
+import com.stocksense.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.*;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +28,9 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final CategoryRepository categoryRepository;
     private final InventoryRepository inventoryRepository;
+    private final LocationRepository locationRepository;
+    private final InventoryOperationService inventoryOps;
+    private final UserRepository userRepository;
 
     @Transactional(readOnly = true)
     public Page<ProductResponse> list(String search, Long categoryId, int page, int size) {
@@ -50,7 +60,29 @@ public class ProductService {
                 .active(true)
                 .build();
 
-        return toResponse(productRepository.save(product));
+        Product savedProduct = productRepository.save(product);
+
+        if (req.initialStock() != null && req.initialStock() > 0) {
+            if (req.initialLocationId() == null) {
+                throw new BusinessException("Initial location must be provided when initial stock is specified");
+            }
+            Location location = locationRepository.findById(req.initialLocationId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Location not found: " + req.initialLocationId()));
+
+            User currentUser = getCurrentUser();
+
+            inventoryOps.increaseStock(
+                    savedProduct,
+                    location,
+                    req.initialStock(),
+                    "INITIAL_STOCK",
+                    savedProduct.getId(),
+                    "PRODUCT",
+                    currentUser
+            );
+        }
+
+        return toResponse(savedProduct);
     }
 
     @Transactional
@@ -87,6 +119,17 @@ public class ProductService {
         if (categoryId == null) return null;
         return categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Category not found: " + categoryId));
+    }
+
+    private User getCurrentUser() {
+        try {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.getName() != null && !"anonymousUser".equals(auth.getName())) {
+                return userRepository.findByEmail(auth.getName()).orElse(null);
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     private ProductResponse toResponse(Product p) {

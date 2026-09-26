@@ -60,21 +60,42 @@ public class InventoryOperationService {
     }
 
     /**
-     * Apply an adjustment (can be positive or negative delta).
+     * Apply an adjustment atomically with pessimistic locking.
+     * Calculates delta against current actual stock at apply-time,
+     * prevents negative stock, updates inventory to countedQuantity,
+     * and writes the accurate ledger entry.
+     * Returns the actual applied delta.
+     */
+    public int applyAdjustment(Product product, Location location,
+                               int countedQty,
+                               Long referenceId, User performedBy) {
+        if (countedQty < 0) {
+            throw new BusinessException("Counted quantity cannot be negative: " + countedQty);
+        }
+
+        Inventory inv = findOrCreate(product, location);
+        int currentActual = inv.getQuantity();
+        int delta = countedQty - currentActual;
+
+        inv.setQuantity(countedQty);
+        inventoryRepository.save(inv);
+
+        recordLedger(product,
+                delta < 0 ? location : null,
+                delta > 0 ? location : null,
+                "ADJUSTMENT", referenceId, "ADJUSTMENT",
+                delta, countedQty, performedBy);
+
+        return delta;
+    }
+
+    /**
+     * Overloaded method for backwards compatibility.
      */
     public void applyAdjustment(Product product, Location location,
                                 int currentQty, int newQty,
                                 Long referenceId, User performedBy) {
-        Inventory inv = findOrCreate(product, location);
-        inv.setQuantity(newQty);
-        inventoryRepository.save(inv);
-
-        int delta = newQty - currentQty;
-        recordLedger(product,
-                delta < 0 ? location : null,
-                delta >= 0 ? location : null,
-                "ADJUSTMENT", referenceId, "ADJUSTMENT",
-                delta, newQty, performedBy);
+        applyAdjustment(product, location, newQty, referenceId, performedBy);
     }
 
     private Inventory findOrCreate(Product product, Location location) {

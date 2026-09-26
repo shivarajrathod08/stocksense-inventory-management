@@ -74,12 +74,16 @@ public class AdjustmentService {
             throw new BusinessException("Cannot apply adjustment in status: " + adj.getStatus());
         }
 
-        inventoryOps.applyAdjustment(
-                adj.getProduct(), adj.getLocation(),
-                adj.getRecordedQuantity(), adj.getCountedQuantity(),
-                adj.getId(), currentUser
+        // Apply dynamically against current actual stock at apply time
+        int actualDelta = inventoryOps.applyAdjustment(
+                adj.getProduct(),
+                adj.getLocation(),
+                adj.getCountedQuantity(),
+                adj.getId(),
+                currentUser
         );
 
+        adj.setDifference(actualDelta);
         adj.setStatus("APPLIED");
         adj.setAppliedBy(currentUser);
         adj.setAppliedAt(LocalDateTime.now());
